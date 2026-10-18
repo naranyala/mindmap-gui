@@ -255,6 +255,7 @@ src/
   ui/
     outline.rs            list panel (two-way sync)
     palette.rs            command palette
+    help.rs               keymap-driven help window
     inspector.rs          style / details panel
     context_menu.rs
     dialogs.rs            confirm, export, import, about
@@ -262,6 +263,7 @@ src/
     theme.rs              egui Visuals wiring from model::style
   io/
     autosave.rs           shadow file, recovery prompt
+    save.rs               off-thread document save, atomic rename
     session.rs            recent files, window + view state
     export/{png,svg,pdf,markdown,opml}.rs
     import/{markdown,opml,freemind}.rs

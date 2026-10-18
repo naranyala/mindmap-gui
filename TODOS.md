@@ -98,14 +98,25 @@ every later feature multiplies these problems.
       *Accept:* `kill -9` during editing loses ≤ 5 s of work; recovery prompt
       is dismissible without corrupting either copy.
 - [ ] **T1.7** — **Session restore + recent files.** Persist window size,
-      last map path, camera, selection, and a recent-files list.
-      *I3* · `src/io/session.rs` · **S** · Deps: T1.1
-      *Accept:* quit and relaunch → same map, same zoom/pan/selection.
+      last map path, camera, selection, and a recent-files list. Full
+      "exactly as left" also needs fold state — lands once `folded`
+      exists and round-trips via format v2's `view` (T1.8) and T2.1.
+      *I3* · `src/io/session.rs` · **S** · Deps: T1.1, T1.8
+      *Accept:* quit and relaunch → same map, same zoom/pan/selection;
+      after T2.1, fold state restores too.
 - [ ] **T1.8** — **File format v2.** Add `note`, `style`, `folded`, `link`,
       `icon`, `view`, `meta` with serde defaults; keep v1 files loading;
       round-trip unknown fields byte-stably. *I3 I5* · `src/model/format.rs` · **M** · Deps: T1.1
       *Accept:* v1 fixture loads; v2 with unknown extra field re-saves with
       the field intact; explicit version gate with a clear error message.
+- [ ] **T1.9** — **Off-thread document save.** `Ctrl+S`/Save As serialize on
+      a worker thread against a snapshot (same machinery as T1.6's shadow
+      write), temp file + atomic rename; the UI keeps editing while the
+      write completes and a newer save supersedes it.
+      *I3 P2* · `src/io/save.rs` · **M** · Deps: T1.6
+      *Accept:* saving a 5 000-node map never blocks input < 16 ms; edits
+      made during a save are captured by the following save; no torn file
+      if the process dies mid-write (temp + rename).
 
 ---
 
@@ -113,7 +124,8 @@ every later feature multiplies these problems.
 
 - [ ] **T2.1** — **Fold / expand subtree.** `folded` flag on node; hidden
       descendants not painted, not hit-tested, excluded from `bounds()`.
-      Fold indicator on nodes with children. *I2 I4* · **M** · Deps: T1.1, T1.8
+      Fold indicator on nodes with children; folding is a `SetFolded`
+      command so it joins the undo history. *I2 I4* · **M** · Deps: T1.1, T1.8, T1.3
 - [ ] **T2.2** — **Multi-select.** Shift-click additive, marquee on canvas
       drag, `Ctrl+A` select all. Selection is a `HashSet<NodeId>`.
       *I2* · `src/canvas/interaction.rs` · **L** · Deps: T1.2, T1.3
@@ -122,7 +134,8 @@ every later feature multiplies these problems.
       serialized subtree JSON. *I1 I2* · **M** · Deps: T2.2, T1.3
 - [ ] **T2.4** — **Drag to re-parent.** Dragging node A over node B makes B
       A's parent (cycle-guarded); dropping on empty canvas detaches to root.
-      *I2* · `src/canvas/interaction.rs` · **M** · Deps: T2.2
+      Re-parent is a `Reparent` command (undo restores parent + index).
+      *I2* · `src/canvas/interaction.rs` · **M** · Deps: T2.2, T1.3
       *Accept:* cannot create a cycle (ancestor dropped on descendant) — show
       a refused-drop cursor instead.
 - [ ] **T2.5** — **Arrow-key navigation.** Nearest node in the pressed
@@ -145,19 +158,29 @@ every later feature multiplies these problems.
       *I2* · `src/model/layout.rs` · **L** · Deps: T1.1, T1.3
       *Accept:* 1 000 nodes layout in < 50 ms off the frame path; result is
       undoable as one `Batch`.
+- [ ] **T2.11** — **Detail LOD (zoom-aware painting).** Below a zoom
+      threshold draw nodes as filled rects and edges as straight segments —
+      no text shaping, no galley reads (L6 strategy table). The threshold
+      reuses T1.5's `zoom_bucket`.
+      *P2 I2 I4* · `src/canvas/node_widget.rs` · **M** · Deps: T1.5
+      *Accept:* a 1 000-node map at 0.15× does zero `layout_no_wrap` calls
+      in steady state (debug counter) and frame cost stays flat.
 
 ---
 
 ## Phase 3 — Refine & express (P1: I5, I6)
 
 - [ ] **T3.1** — **Node styling.** Per-node colour, border, corner radius;
-      inspector panel to edit. *I5* · **M** · Deps: T1.8
+      inspector panel to edit. Style edits are `SetStyle` commands so a
+      change is undoable in one step (L4 I5 budget). *I5* · **M** · Deps: T1.8, T1.3
 - [ ] **T3.2** — **Theme colour inheritance.** Branches inherit an accent
       from an ancestor unless overridden. *I5* · **S** · Deps: T3.1
 - [ ] **T3.3** — **Icons & markers.** Priority (1–5), progress, flag, custom
-      emoji; rendered in the node box. *I5* · **M** · Deps: T1.8
+      emoji; rendered in the node box; icon edits are commands like all
+      mutations. *I5* · **M** · Deps: T1.8, T1.3
 - [ ] **T3.4** — **Node notes.** Markdown `note` field, shown in inspector,
-      rendered in a popover on hover/click. *I5* · **M** · Deps: T1.8
+      rendered in a popover on hover/click; note edits are `SetNote`
+      commands. *I5* · **M** · Deps: T1.8, T1.3
 - [ ] **T3.5** — **Hyperlinks.** `link` field, open in system browser.
       *I5 I8* · **S** · Deps: T1.8
 - [ ] **T3.6** — **Themes.** Light / dark / system + accent picker; egui
@@ -191,19 +214,36 @@ every later feature multiplies these problems.
 - [ ] **T4.4** — **Customizable shortcuts.** Rebind via a settings view;
       persisted in session state. *P4* · **M** · Deps: T4.1
 - [ ] **T4.5** — **Presentation mode.** Fullscreen, no editing chrome,
-      precomputed camera targets, step through in reading order.
+      precomputed camera targets + animated transitions (no reflow while
+      advancing, L4 I7), step through in reading order.
       *I7* · **L** · Deps: T2.10
 - [ ] **T4.6** — **Accessibility pass.** Focus order, screen-reader labels on
       nodes (egui AccessKit), high-contrast theme, visible focus rings.
       *P4* · **M** · Deps: T3.6
 - [ ] **T4.7** — **Large-map soak test.** Generated 5 000-node fixture in CI;
-      assert cold start, frame budget, search, export budgets from **L4**.
-      *P2* · **M** · Deps: T1.5
+      assert the **L4** budgets explicitly: cold start < 500 ms (I1),
+      worst-case input latency < 16 ms (P2), search < 100 ms (I4), export
+      < 2 s (I6), plus steady-state frame budget.
+      *P2 I1 I4 I6* · **M** · Deps: T1.5
 - [ ] **T4.8** — **Packaging.** `.desktop` entry + icon on Linux, `.app`/
       `.dmg` on macOS, `.msi`/`.exe` on Windows; register `.mindmap` file
       association. *I3* · **M** · Deps: T1.8
 - [ ] **T4.9** — **`cargo-dist` / release automation.** Tagged releases
       produce platform artifacts + checksums. *I3* · **S** · Deps: T4.8
+- [ ] **T4.10** — **Local-first & privacy audit (P1 guardrail).** Prove the
+      release binary needs no network: no network crate reachable from the
+      default feature set, a CI source scan that fails if one is added
+      under `src/`, and a manual run with networking disabled
+      (`unshare -n cargo run`) against a > 300-node map.
+      *P1* · **S** · No deps
+      *Accept:* open/edit/save works with all networking disabled; the CI
+      guard is green.
+- [ ] **T4.11** — **Help window from the keymap.** Searchable list of every
+      named action + its chord (or "unassigned"), generated from
+      `input/keymap.rs` so it can never drift from real behavior.
+      *P4* · `src/ui/help.rs` · **S** · Deps: T4.1
+      *Accept:* every keyboard-reachable action appears in the window;
+      rebinding a chord (T4.4) updates it automatically.
 
 ---
 
@@ -245,10 +285,10 @@ cargo run -- <some-map.json>     # manual pass, > 300 nodes
 
 | Intent | Tasks |
 |--------|-------|
-| **I1** Capture | T0.1–T0.3 · T1.3 T1.4 · T2.3 |
-| **I2** Organize | T0.1–T0.2 · T1.1–T1.5 · T2.1–T2.6 T2.9 T2.10 |
-| **I3** Persist | T0.4 · T1.3 T1.6–T1.8 · T4.8 T4.9 |
-| **I4** Navigate | T1.1 T1.5 · T2.7–T2.9 · T4.7 |
+| **I1** Capture | T0.1–T0.3 · T1.3 T1.4 · T2.3 · T4.7 |
+| **I2** Organize | T0.1–T0.2 · T1.1–T1.5 · T2.1–T2.6 T2.9–T2.11 |
+| **I3** Persist | T0.4 · T1.3 T1.6–T1.9 · T4.8 T4.9 |
+| **I4** Navigate | T1.1 T1.5 · T2.7–T2.9 T2.11 · T4.7 |
 | **I5** Refine | T1.8 · T3.1–T3.6 |
 | **I6** Express | T2.6 · T3.7–T3.9 |
 | **I7** Present | T4.5 |
