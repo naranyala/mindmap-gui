@@ -214,9 +214,9 @@ impl Canvas {
                 };
                 let p0 = edge_anchor(parent.pos, psize, child.pos);
                 let p3 = edge_anchor(child.pos, csize, parent.pos);
-                let mid = Vec2::new((p3.x - p0.x) * 0.5, 0.0);
+                let [p1, p2] = edge_control_points(p0, p3, parent.pos, child.pos);
                 ui.painter().add(CubicBezierShape::from_points_stroke(
-                    [p0, p0 + mid, p3 - mid, p3],
+                    [p0, p1, p2, p3],
                     false,
                     Color32::TRANSPARENT,
                     Stroke::new(EDGE_WIDTH, edge_color),
@@ -443,6 +443,20 @@ fn edge_anchor(center: Pos2, size: Vec2, target: Pos2) -> Pos2 {
     center + dir * s
 }
 
+/// Choose cubic Bézier control points along the dominant direction between
+/// node centers. Horizontal edges bend horizontally; vertical edges bend
+/// vertically, including when either node is positioned on the opposite side.
+fn edge_control_points(start: Pos2, end: Pos2, source: Pos2, target: Pos2) -> [Pos2; 2] {
+    let direction = target - source;
+    if direction.x.abs() >= direction.y.abs() {
+        let offset = (end.x - start.x) * 0.5;
+        [start + Vec2::new(offset, 0.0), end - Vec2::new(offset, 0.0)]
+    } else {
+        let offset = (end.y - start.y) * 0.5;
+        [start + Vec2::new(0.0, offset), end - Vec2::new(0.0, offset)]
+    }
+}
+
 fn should_finish_edit(
     just_started: bool,
     enter: bool,
@@ -454,7 +468,9 @@ fn should_finish_edit(
 
 #[cfg(test)]
 mod tests {
-    use super::should_finish_edit;
+    use egui::{Pos2, Vec2};
+
+    use super::{edge_control_points, should_finish_edit};
 
     #[test]
     fn newly_started_editor_ignores_the_click_that_started_it() {
@@ -464,5 +480,49 @@ mod tests {
     #[test]
     fn existing_editor_finishes_on_outside_click() {
         assert!(should_finish_edit(false, false, false, true));
+    }
+
+    #[test]
+    fn edge_controls_route_horizontally_in_both_directions() {
+        for (source, target) in [
+            (Pos2::ZERO, Pos2::new(200.0, 20.0)),
+            (Pos2::new(200.0, 20.0), Pos2::ZERO),
+        ] {
+            let [start, end] = (source, target);
+            let controls = edge_control_points(start, end, source, target);
+            assert_eq!(controls[0].y, start.y);
+            assert_eq!(controls[1].y, end.y);
+            assert_eq!(controls[0].x, (start.x + end.x) * 0.5);
+            assert_eq!(controls[1].x, (start.x + end.x) * 0.5);
+        }
+    }
+
+    #[test]
+    fn edge_controls_route_vertically_in_both_directions() {
+        for (source, target) in [
+            (Pos2::ZERO, Pos2::new(20.0, 200.0)),
+            (Pos2::new(20.0, 200.0), Pos2::ZERO),
+        ] {
+            let [start, end] = (source, target);
+            let controls = edge_control_points(start, end, source, target);
+            assert_eq!(controls[0].x, start.x);
+            assert_eq!(controls[1].x, end.x);
+            assert_eq!(controls[0].y, (start.y + end.y) * 0.5);
+            assert_eq!(controls[1].y, (start.y + end.y) * 0.5);
+        }
+    }
+
+    #[test]
+    fn edge_controls_follow_dominant_axis_for_diagonal_positions() {
+        let source = Pos2::ZERO;
+        let target = Pos2::new(40.0, 160.0);
+        let start = Pos2::new(0.0, 10.0);
+        let end = Pos2::new(40.0, 150.0);
+        let controls = edge_control_points(start, end, source, target);
+        assert_eq!(controls[0].x, start.x);
+        assert_eq!(controls[1].x, end.x);
+        assert_eq!(controls[0].y, 80.0);
+        assert_eq!(controls[1].y, 80.0);
+        assert_ne!(controls[0] - start, Vec2::ZERO);
     }
 }
